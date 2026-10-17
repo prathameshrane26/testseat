@@ -209,7 +209,7 @@
                         <div class="flex items-center gap-2">
                             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-beige-200/60 text-beige-800 text-xs font-semibold">
                                 <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-                                Auto-saved
+                                Cloud-synced
                             </span>
                         </div>
                     </div>
@@ -329,109 +329,109 @@
 
     <script>
     /* =====================================================================
-       EMBEDDED BACKEND  (replaces main.c + SQLite)
-       Same tables and endpoints as the C server, stored in localStorage:
-         users  (id, username, email, password, is_admin)
-         events (id, user_id, event_name, event_data, created_at)
+       CLOUD BACKEND CLIENT
+       Talks to the C backend on Render (NeonDB) via fetch().
+       Nothing but the login session is kept in localStorage.
        ===================================================================== */
     const Backend = (() => {
-        const K_USERS = 'gala_users', K_EVENTS = 'gala_events', K_SESSION = 'gala_session';
+        let sessionUser = null;
+        try { sessionUser = JSON.parse(localStorage.getItem('gala_current_user')) || null; } catch (e) {}
+        let authToken = localStorage.getItem('gala_token') || null;
 
-        const read = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch (e) { return []; } };
-        const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
-
-        async function hashPw(pw, salt) {
-            const data = new TextEncoder().encode(salt + ':' + pw);
-            if (window.crypto && crypto.subtle) {
-                const buf = await crypto.subtle.digest('SHA-256', data);
-                return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-            }
-            let h = 5381;
-            for (const b of data) h = ((h << 5) + h + b) >>> 0;
-            return 'x' + h.toString(16);
+        function headers() {
+            const h = { 'Content-Type': 'application/json' };
+            if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+            return h;
         }
 
-        const newSalt = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-        const nextId = (rows) => rows.reduce((m, r) => Math.max(m, r.id), 0) + 1;
-        const publicUser = (u) => ({ id: u.id, username: u.username, email: u.email, is_admin: u.is_admin });
-
         return {
-            // Seed the default admin account (like INSERT in init_db)
             async init() {
-                const users = read(K_USERS);
-                if (!users.some(u => u.username === 'admin')) {
-                    const salt = newSalt();
-                    users.push({
-                        id: nextId(users), username: 'admin', email: 'admin@gala.com',
-                        salt, password: await hashPw('galaadmin2026', salt), is_admin: 1
-                    });
-                    write(K_USERS, users);
-                }
+                // Cloud backend handles initialization
             },
 
-            // POST /api/auth/register
             async register(username, email, password) {
-                if (!username || !email || !password) throw new Error('Missing required fields (username, email, password)');
-                const users = read(K_USERS);
-                const exists = users.some(u =>
-                    u.username.toLowerCase() === username.toLowerCase() ||
-                    u.email.toLowerCase() === email.toLowerCase());
-                if (exists) throw new Error('Username or email already exists');
-                const salt = newSalt();
-                users.push({ id: nextId(users), username, email, salt, password: await hashPw(password, salt), is_admin: 0 });
-                write(K_USERS, users);
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'Registration failed');
+                return data;
             },
 
-            // POST /api/auth/login
             async login(username, password) {
-                if (!username || !password) throw new Error('Missing username or password');
-                const u = read(K_USERS).find(x => x.username.toLowerCase() === username.toLowerCase());
-                if (!u || (await hashPw(password, u.salt)) !== u.password) throw new Error('Invalid username or password');
-                localStorage.setItem(K_SESSION, String(u.id));
-                return publicUser(u);
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'Invalid username or password');
+
+                authToken = data.token || null;
+                if (authToken) localStorage.setItem('gala_token', authToken);
+
+                sessionUser = {
+                    id: data.token ? parseInt(data.token.split('_').pop()) || 1 : 1,
+                    username: data.username || username,
+                    email: username + '@gala.com',
+                    is_admin: data.isAdmin ? 1 : 0
+                };
+                localStorage.setItem('gala_current_user', JSON.stringify(sessionUser));
+                return sessionUser;
             },
 
             currentUser() {
-                const id = parseInt(localStorage.getItem(K_SESSION), 10);
-                const u = read(K_USERS).find(x => x.id === id);
-                return u ? publicUser(u) : null;
+                return sessionUser;
             },
 
-            logout() { localStorage.removeItem(K_SESSION); },
+            logout() {
+                sessionUser = null;
+                authToken = null;
+                localStorage.removeItem('gala_current_user');
+                localStorage.removeItem('gala_token');
+            },
 
             // GET /api/admin/users
-            adminUsers() {
-                const events = read(K_EVENTS);
-                return read(K_USERS).map(u => {
-                    const mine = events.filter(e => e.user_id === u.id);
-                    let data = null;
-                    if (mine.length) { try { data = JSON.parse(mine[mine.length - 1].event_data); } catch (e) {} }
-                    return { ...publicUser(u), total_events: mine.length, eventData: data };
-                });
+            async adminUsers() {
+                try {
+                    const res = await fetch('/api/admin/users', { headers: headers() });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Failed to load users');
+                    return Array.isArray(data) ? data : (data.users || []);
+                } catch (err) {
+                    console.warn('Admin load failed', err);
+                    return [];
+                }
             },
 
-            // POST /api/events/save  (upsert the user's seating plan)
-            saveEvent(userId, data) {
-                const events = read(K_EVENTS);
-                const json = JSON.stringify(data);
-                const existing = events.find(e => e.user_id === userId);
-                if (existing) {
-                    existing.event_data = json;
-                    existing.updated_at = new Date().toISOString();
-                } else {
-                    events.push({
-                        id: nextId(events), user_id: userId, event_name: 'Seating Plan',
-                        event_data: json, created_at: new Date().toISOString()
+            // POST /api/events/save
+            async saveEvent(userId, data) {
+                try {
+                    await fetch('/api/events/save', {
+                        method: 'POST',
+                        headers: headers(),
+                        body: JSON.stringify(data)
                     });
+                } catch (err) {
+                    console.warn('Cloud save failed', err);
                 }
-                try { write(K_EVENTS, events); } catch (e) { console.warn('Save failed', e); }
             },
 
             // POST /api/events/load
-            loadEvent(userId) {
-                const e = read(K_EVENTS).find(x => x.user_id === userId);
-                if (!e) return null;
-                try { return JSON.parse(e.event_data); } catch (err) { return null; }
+            async loadEvent(userId) {
+                try {
+                    const res = await fetch('/api/events/load', {
+                        method: 'POST',
+                        headers: headers()
+                    });
+                    const data = await res.json();
+                    return data.eventData || null;
+                } catch (err) {
+                    console.warn('Cloud load failed', err);
+                    return null;
+                }
             }
         };
     })();
@@ -460,6 +460,7 @@
 
     const state = defaultState();
     let currentUser = null;
+    let stateLoaded = false; // prevents saving defaults over cloud data before load finishes
 
     const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
@@ -491,16 +492,21 @@
     }
     window.addEventListener('resize', setupCanvas);
 
-    /* ---------- persistence ---------- */
+    /* ---------- persistence (cloud) ---------- */
+    let persistTimer = null;
     function persist() {
-        if (!currentUser) return;
-        Backend.saveEvent(currentUser.id, {
-            guests: state.guests,
-            relationships: state.relationships,
-            venue: state.venue,
-            harmonyScore: state.harmonyScore,
-            tables: state.tables
-        });
+        if (!currentUser || currentUser.is_admin || !stateLoaded) return;
+        // debounce so rapid UI changes produce a single network request
+        clearTimeout(persistTimer);
+        persistTimer = setTimeout(() => {
+            Backend.saveEvent(currentUser.id, {
+                guests: state.guests,
+                relationships: state.relationships,
+                venue: state.venue,
+                harmonyScore: state.harmonyScore,
+                tables: state.tables
+            });
+        }, 400);
     }
 
     function syncVenueFromInputs() {
@@ -513,8 +519,9 @@
     [venueWidthInput, venueHeightInput, maxTablesInput, maxTableSizeInput].forEach(el =>
         el.addEventListener('change', () => { syncVenueFromInputs(); persist(); }));
 
-    function applyUserState(user) {
-        const saved = Backend.loadEvent(user.id);
+    async function applyUserState(user) {
+        stateLoaded = false;
+        const saved = await Backend.loadEvent(user.id);
         const fresh = defaultState();
         if (saved) {
             state.guests = saved.guests || [];
@@ -529,6 +536,7 @@
         venueHeightInput.value = state.venue.length;
         maxTablesInput.value = state.venue.maxTables;
         maxTableSizeInput.value = state.venue.maxPerTable;
+        stateLoaded = true;
         updateUI();
         if (!saved) triggerSolve();
     }
@@ -1034,9 +1042,8 @@
 
     /* =====================================================================
        AUTH UI
+       (admin credentials are now verified by the server, not in this file)
        ===================================================================== */
-    const ADMIN_USER = 'admin';
-    const ADMIN_PASS = 'galaadmin2026';
     let authMode = 'login';
 
     function switchAuthTab(mode) {
@@ -1070,24 +1077,16 @@
                 setTimeout(() => switchAuthTab('login'), 900);
             } else {
                 setAuthMsg('Authenticating...');
-                // Hardcoded admin login
-                if (username === ADMIN_USER && password === ADMIN_PASS) {
-                    const adm = Backend.adminUsers().find(u => u.is_admin);
-                    localStorage.setItem('gala_session', String(adm.id));
-                    document.getElementById('auth-pass').value = '';
-                    enterSession(adm);
-                    return;
-                }
                 const user = await Backend.login(username, password);
                 document.getElementById('auth-pass').value = '';
-                enterSession(user);
+                await enterSession(user);
             }
         } catch (err) {
             setAuthMsg(err.message || 'Something went wrong', 'error');
         }
     }
 
-    function enterSession(user) {
+    async function enterSession(user) {
         currentUser = user;
         document.getElementById('auth-modal').classList.add('hidden');
         setAuthMsg('');
@@ -1095,14 +1094,14 @@
         if (user.is_admin) {
             document.getElementById('app-root').classList.add('hidden');
             document.getElementById('admin-panel').classList.remove('hidden');
-            renderAdminDashboard();
+            await renderAdminDashboard();
             return;
         }
 
         document.getElementById('admin-panel').classList.add('hidden');
         document.getElementById('app-root').classList.remove('hidden');
         document.getElementById('user-display').textContent = user.username;
-        applyUserState(user);
+        await applyUserState(user);
         setupCanvas();
         showToast(`Welcome, ${user.username}!`);
     }
@@ -1110,6 +1109,7 @@
     function handleLogout() {
         Backend.logout();
         currentUser = null;
+        stateLoaded = false;
         document.getElementById('app-root').classList.add('hidden');
         document.getElementById('admin-panel').classList.add('hidden');
         document.getElementById('auth-modal').classList.remove('hidden');
@@ -1117,9 +1117,10 @@
         switchAuthTab('login');
     }
 
-    function renderAdminDashboard() {
+    async function renderAdminDashboard() {
         const container = document.getElementById('admin-clients-container');
-        const users = Backend.adminUsers();
+        container.innerHTML = `<div class="text-xs text-beige-600 italic">Loading accounts...</div>`;
+        const users = await Backend.adminUsers();
 
         container.innerHTML = `
             <div class="text-xs text-beige-700">${users.length} registered account(s)</div>
@@ -1136,10 +1137,10 @@
                     <summary class="cursor-pointer flex flex-wrap justify-between items-center gap-2 font-bold text-sm text-beige-900">
                         <span>
                             ${escapeHtml(u.username)}
-                            <span class="font-normal text-xs text-beige-600">(${escapeHtml(u.email)})</span>
+                            <span class="font-normal text-xs text-beige-600">(${escapeHtml(u.email || '')})</span>
                             ${u.is_admin ? '<span class="ml-2 text-[10px] bg-champagne-gold/30 px-2 py-0.5 rounded">ADMIN</span>' : ''}
                         </span>
-                        <span class="text-xs bg-beige-200 px-2 py-0.5 rounded">${u.total_events} saved event(s)</span>
+                        <span class="text-xs bg-beige-200 px-2 py-0.5 rounded">${u.total_events || 0} saved event(s)</span>
                     </summary>
                     ${rows ? `
                     <table class="w-full text-xs text-left mt-3 border-collapse">
@@ -1157,9 +1158,9 @@
        ===================================================================== */
     window.onload = async function () {
         await Backend.init();
-        updateUI();               // renders defaults (persist() is a no-op until logged in)
+        updateUI();               // renders defaults (persist() is a no-op until a user is loaded)
         const user = Backend.currentUser();
-        if (user) enterSession(user);
+        if (user) await enterSession(user);
     };
     </script>
 </body>
