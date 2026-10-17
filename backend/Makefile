@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Iinclude -O3
+CFLAGS = -Wall -Wextra -Iinclude -I/usr/include/postgresql -O3
 
 ifeq ($(OS),Windows_NT)
     LIBS = -lws2_32 -lpq
