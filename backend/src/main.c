@@ -9,6 +9,12 @@ static PGconn *conn = NULL;
 
 #define JSON_HDR "Content-Type: application/json\r\n"
 
+/* Built-in core admin (used when ADMIN_USER / ADMIN_PASSWORD env vars are not set).
+   Change these values before deploying publicly. */
+#define CORE_ADMIN_USER  "admin"
+#define CORE_ADMIN_PASS  "Gala@Admin#2026"
+#define CORE_ADMIN_EMAIL "admin@gala.com"
+
 /* ---------- database ---------- */
 
 // Returns 1 if the connection is usable (reconnects if it dropped)
@@ -57,28 +63,34 @@ static void init_db(void) {
         fprintf(stderr, "SQL error in table creation: %s\n", PQerrorMessage(conn));
     PQclear(res);
 
-    // Seed / refresh the admin account from environment variables.
-    // Set ADMIN_USER and ADMIN_PASSWORD in Render. Nothing is hardcoded here.
+    // Core admin account: created / re-synced on every start.
+    // Env vars ADMIN_USER / ADMIN_PASSWORD / ADMIN_EMAIL override the built-in defaults.
     const char *au = getenv("ADMIN_USER");
     const char *ap = getenv("ADMIN_PASSWORD");
-    if (au && ap && *au && *ap) {
-        const char *ae = getenv("ADMIN_EMAIL");
-        if (!ae || !*ae) ae = "admin@gala.com";
-        const char *vals[3] = { au, ae, ap };
-        res = PQexecParams(conn,
-            "INSERT INTO users (username, email, password, is_admin) "
-            "VALUES ($1, $2, crypt($3, gen_salt('bf')), 1) "
-            "ON CONFLICT (username) DO UPDATE "
-            "SET password = crypt($3, gen_salt('bf')), is_admin = 1;",
-            3, NULL, vals, NULL, NULL, 0);
-        if (PQresultStatus(res) != PGRES_COMMAND_OK)
-            fprintf(stderr, "Admin seed failed: %s\n", PQerrorMessage(conn));
-        else
-            printf("Admin account '%s' ready.\n", au);
-        PQclear(res);
-    } else {
-        fprintf(stderr, "ADMIN_USER / ADMIN_PASSWORD not set: no admin account will be created.\n");
-    }
+    const char *ae = getenv("ADMIN_EMAIL");
+    if (!au || !*au) au = CORE_ADMIN_USER;
+    if (!ap || !*ap) ap = CORE_ADMIN_PASS;
+    if (!ae || !*ae) ae = CORE_ADMIN_EMAIL;
+
+    const char *vals[3] = { au, ae, ap };
+    res = PQexecParams(conn,
+        "INSERT INTO users (username, email, password, is_admin) "
+        "VALUES ($1, $2, crypt($3, gen_salt('bf')), 1) "
+        "ON CONFLICT (username) DO UPDATE "
+        "SET password = crypt($3, gen_salt('bf')), is_admin = 1;",
+        3, NULL, vals, NULL, NULL, 0);
+    if (PQresultStatus(res) != PGRES_COMMAND_OK)
+        fprintf(stderr, "Admin seed failed: %s\n", PQerrorMessage(conn));
+    else
+        printf("Core admin account '%s' ready.\n", au);
+    PQclear(res);
+
+    // Safety: only the core admin may hold admin rights
+    const char *keep[1] = { au };
+    res = PQexecParams(conn,
+        "UPDATE users SET is_admin = 0 WHERE username <> $1 AND is_admin <> 0;",
+        1, NULL, keep, NULL, NULL, 0);
+    PQclear(res);
 }
 
 /* ---------- helpers ---------- */
