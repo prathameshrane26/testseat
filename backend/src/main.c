@@ -11,7 +11,6 @@ static PGconn *conn = NULL;
 static void init_db(void) {
     const char *conninfo = getenv("DATABASE_URL");
     if (!conninfo) {
-        // Fallback string if environment variable is not set locally
         conninfo = "postgresql://neondb_owner:npg_admin@ep-example-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
     }
 
@@ -32,7 +31,7 @@ static void init_db(void) {
         "is_admin INTEGER DEFAULT 0);"
         "CREATE TABLE IF NOT EXISTS events ("
         "id SERIAL PRIMARY KEY,"
-        "user_id INTEGER REFERENCES users(id),"
+        "user_id INTEGER,"
         "event_name TEXT,"
         "event_data TEXT,"
         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);";
@@ -141,6 +140,49 @@ static void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
     PQclear(res);
 }
 
+// Handler for Saving Seating Events (/api/events/save) -> Saves to NeonDB
+static void handle_save_event(struct mg_connection *c, struct mg_http_message *hm) {
+    char *body_str = (char *)malloc(hm->body.len + 1);
+    if (!body_str) {
+        mg_http_reply(c, 500, "Content-Type: application/json\r\n", "{\"error\":\"Memory allocation error\"}\n");
+        return;
+    }
+    memcpy(body_str, hm->body.buf, hm->body.len);
+    body_str[hm->body.len] = '\0';
+
+    const char *sql = "INSERT INTO events (event_name, event_data) VALUES ($1, $2);";
+    const char *paramValues[2] = { "Default Event", body_str };
+
+    PGresult *res = PQexecParams(conn, sql, 2, NULL, paramValues, NULL, NULL, 0);
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        mg_http_reply(c, 500, "Content-Type: application/json\r\n", "{\"error\":\"Failed to save event to NeonDB\"}\n");
+    } else {
+        mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"message\":\"Event seating saved successfully to NeonDB\"}\n");
+    }
+    
+    PQclear(res);
+    free(body_str);
+}
+
+// Handler for Loading Seating Events (/api/events/load) -> Loads from NeonDB
+static void handle_load_event(struct mg_connection *c) {
+    const char *sql = "SELECT event_data FROM events ORDER BY id DESC LIMIT 1;";
+    PGresult *res = PQexec(conn, sql);
+
+    if (PQresultStatus(res) == PGRES_TUPLES_OK && PQntuples(res) > 0) {
+        char *event_data = PQgetvalue(res, 0, 0);
+        char *response = (char *)malloc(strlen(event_data) + 32);
+        sprintf(response, "{\"eventData\":%s}\n", event_data);
+        
+        mg_http_reply(c, 200, "Content-Type: application/json\r\n", response);
+        free(response);
+    } else {
+        mg_http_reply(c, 200, "Content-Type: application/json\r\n", "{\"eventData\":null}\n");
+    }
+
+    PQclear(res);
+}
+
 // HTTP Request Event Handler
 static void fn(struct mg_connection *c, int ev, void *ev_data) {
     if (ev == MG_EV_HTTP_MSG) {
@@ -157,12 +199,10 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
                           "[{\"id\":1,\"username\":\"Admin\",\"email\":\"admin@gala.com\",\"is_admin\":1,\"total_events\":1}]");
         } 
         else if (mg_match(hm->uri, mg_str("/api/events/save"), NULL)) {
-            mg_http_reply(c, 200, "Content-Type: application/json\r\n", 
-                          "{\"message\":\"Event seating saved successfully to NeonDB\"}\n");
+            handle_save_event(c, hm);
         }
         else if (mg_match(hm->uri, mg_str("/api/events/load"), NULL)) {
-            mg_http_reply(c, 200, "Content-Type: application/json\r\n", 
-                          "{\"eventData\":null}\n");
+            handle_load_event(c);
         }
         else {
             struct mg_http_serve_opts opts = { .root_dir = "frontend" };
@@ -177,7 +217,6 @@ int main(void) {
     struct mg_mgr mgr;
     mg_mgr_init(&mgr);
     
-    // Dynamic port configuration for cloud deployment (Render, etc.) & local fallback
     int port = 5000;
     char *env_port = getenv("PORT");
     if (env_port) {
