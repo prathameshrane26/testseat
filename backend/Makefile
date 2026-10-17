@@ -2,10 +2,10 @@ CC = gcc
 CFLAGS = -Wall -Wextra -Iinclude -O3
 
 ifeq ($(OS),Windows_NT)
-    LIBS = -lws2_32
+    LIBS = -lws2_32 -lpq
     TARGET = server.exe
 else
-    LIBS = -lpthread -ldl
+    LIBS = -lpthread -ldl -lpq
     TARGET = server.exe
 endif
 

@@ -1,18 +1,19 @@
 FROM debian:bookworm-slim
 
+# Install build tools and PostgreSQL libpq development libraries
 RUN apt-get update && apt-get install -y \
     build-essential \
-    libsqlite3-dev \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the entire backend directory (which includes src, include, frontend, and Makefile)
+# Copy backend files into container
 COPY backend/ ./backend/
 
 WORKDIR /app/backend
 
-# Build the C server using make
+# Compile C server with PostgreSQL support
 RUN make
 
 EXPOSE 5000

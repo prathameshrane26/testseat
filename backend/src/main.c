@@ -1,43 +1,47 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sqlite3.h>
+#include <libpq-fe.h>
 #include "mongoose.h"
 #include "optimizer.h"
 
-static sqlite3 *db = NULL;
+static PGconn *conn = NULL;
 
-// Initialize SQLite database and create necessary tables
+// Initialize NeonDB (PostgreSQL) connection and create necessary tables
 static void init_db(void) {
-    int rc = sqlite3_open("database.sqlite", &db);
-    if (rc) {
-        fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
-        return;
-    } else {
-        fprintf(stdout, "Connected to local SQLite database successfully.\n");
+    const char *conninfo = getenv("DATABASE_URL");
+    if (!conninfo) {
+        // Fallback string if environment variable is not set locally
+        conninfo = "postgresql://neondb_owner:npg_admin@ep-example-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
     }
 
-    char *err_msg = 0;
+    conn = PQconnectdb(conninfo);
+    if (PQstatus(conn) == CONNECTION_BAD) {
+        fprintf(stderr, "Connection to NeonDB failed: %s\n", PQerrorMessage(conn));
+        return;
+    } else {
+        fprintf(stdout, "Connected to NeonDB (PostgreSQL) successfully.\n");
+    }
+
     const char *sql = 
         "CREATE TABLE IF NOT EXISTS users ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "id SERIAL PRIMARY KEY,"
         "username TEXT UNIQUE NOT NULL,"
         "email TEXT UNIQUE NOT NULL,"
         "password TEXT NOT NULL,"
         "is_admin INTEGER DEFAULT 0);"
         "CREATE TABLE IF NOT EXISTS events ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "user_id INTEGER,"
+        "id SERIAL PRIMARY KEY,"
+        "user_id INTEGER REFERENCES users(id),"
         "event_name TEXT,"
         "event_data TEXT,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "FOREIGN KEY(user_id) REFERENCES users(id));";
+        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);";
 
-    rc = sqlite3_exec(db, sql, 0, 0, &err_msg);
-    if (rc != SQLITE_OK) {
-        fprintf(stderr, "SQL error in table creation: %s\n", err_msg);
-        sqlite3_free(err_msg);
+    PGresult *res = PQexec(conn, sql);
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        fprintf(stderr, "SQL error in table creation: %s\n", PQerrorMessage(conn));
     }
+    PQclear(res);
 }
 
 // Robust self-contained JSON field extractor
@@ -85,29 +89,20 @@ static void handle_register(struct mg_connection *c, struct mg_http_message *hm)
         return;
     }
 
-    const char *sql = "INSERT INTO users (username, email, password, is_admin) VALUES (?, ?, ?, 0);";
-    sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
-    
-    if (rc != SQLITE_OK) {
-        mg_http_reply(c, 500, "Content-Type: application/json\r\n", "{\"error\":\"Database error preparation failed\"}\n");
-        return;
-    }
+    const char *sql = "INSERT INTO users (username, email, password, is_admin) VALUES ($1, $2, $3, 0);";
+    const char *paramValues[3] = { username, email, password };
 
-    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, email, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 3, password, -1, SQLITE_STATIC);
+    PGresult *res = PQexecParams(conn, sql, 3, NULL, paramValues, NULL, NULL, 0);
+    ExecStatusType status = PQresultStatus(res);
 
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-
-    if (rc != SQLITE_DONE) {
+    if (status != PGRES_COMMAND_OK) {
         mg_http_reply(c, 400, "Content-Type: application/json\r\n", 
-                      "{\"error\":\"Username or email already exists\"}\n");
+                      "{\"error\":\"Username or email already exists or database error\"}\n");
     } else {
         mg_http_reply(c, 201, "Content-Type: application/json\r\n", 
-                      "{\"message\":\"User registered successfully in SQLite backend\"}\n");
+                      "{\"message\":\"User registered successfully in NeonDB backend\"}\n");
     }
+    PQclear(res);
 }
 
 // Handler for User Login (/api/auth/login)
@@ -123,27 +118,19 @@ static void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
 
-    const char *sql = "SELECT id, username, is_admin FROM users WHERE username = ? AND password = ?;";
-    sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, 0);
+    const char *sql = "SELECT id, username, is_admin FROM users WHERE username = $1 AND password = $2;";
+    const char *paramValues[2] = { username, password };
 
-    if (rc != SQLITE_OK) {
-        mg_http_reply(c, 500, "Content-Type: application/json\r\n", "{\"error\":\"Database query error\"}\n");
-        return;
-    }
-
-    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, password, -1, SQLITE_STATIC);
-
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
-        int id = sqlite3_column_int(stmt, 0);
-        const unsigned char *uname = sqlite3_column_text(stmt, 1);
-        int is_admin = sqlite3_column_int(stmt, 2);
+    PGresult *res = PQexecParams(conn, sql, 2, NULL, paramValues, NULL, NULL, 0);
+    
+    if (PQresultStatus(res) == PGRES_TUPLES_OK && PQntuples(res) > 0) {
+        int id = atoi(PQgetvalue(res, 0, 0));
+        char *uname = PQgetvalue(res, 0, 1);
+        int is_admin = atoi(PQgetvalue(res, 0, 2));
 
         char response[256];
         snprintf(response, sizeof(response), 
-                 "{\"message\":\"Login successful\",\"token\":\"c_sqlite_token_%d\",\"username\":\"%s\",\"isAdmin\":%s}\n", 
+                 "{\"message\":\"Login successful\",\"token\":\"c_neon_token_%d\",\"username\":\"%s\",\"isAdmin\":%s}\n", 
                  id, uname, is_admin ? "true" : "false");
         
         mg_http_reply(c, 200, "Content-Type: application/json\r\n", response);
@@ -151,7 +138,7 @@ static void handle_login(struct mg_connection *c, struct mg_http_message *hm) {
         mg_http_reply(c, 401, "Content-Type: application/json\r\n", "{\"error\":\"Invalid username or password\"}\n");
     }
 
-    sqlite3_finalize(stmt);
+    PQclear(res);
 }
 
 // HTTP Request Event Handler
@@ -171,7 +158,7 @@ static void fn(struct mg_connection *c, int ev, void *ev_data) {
         } 
         else if (mg_match(hm->uri, mg_str("/api/events/save"), NULL)) {
             mg_http_reply(c, 200, "Content-Type: application/json\r\n", 
-                          "{\"message\":\"Event seating saved successfully to SQLite\"}\n");
+                          "{\"message\":\"Event seating saved successfully to NeonDB\"}\n");
         }
         else if (mg_match(hm->uri, mg_str("/api/events/load"), NULL)) {
             mg_http_reply(c, 200, "Content-Type: application/json\r\n", 
@@ -200,7 +187,7 @@ int main(void) {
     char s_url[64];
     snprintf(s_url, sizeof(s_url), "http://0.0.0.0:%d", port);
     
-    printf("Starting high-performance C backend with SQLite on %s\n", s_url);
+    printf("Starting high-performance C backend with NeonDB on %s\n", s_url);
     
     if (mg_http_listen(&mgr, s_url, fn, NULL) == NULL) {
         fprintf(stderr, "Error starting server on %s\n", s_url);
@@ -211,7 +198,7 @@ int main(void) {
         mg_mgr_poll(&mgr, 1000);
     }
     
-    sqlite3_close(db);
+    PQfinish(conn);
     mg_mgr_free(&mgr);
     return 0;
 }
