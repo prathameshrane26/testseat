@@ -4,103 +4,436 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Portal - Event Venue Seating Allocator</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        beige: {
+                            50: '#fcfaf7', 100: '#f7f2ea', 200: '#efe5d5', 300: '#e2d2b9', 400: '#cca378',
+                            500: '#b88958', 600: '#9b6c3e', 700: '#7a512d', 800: '#523720', 900: '#2c1e13'
+                        },
+                        champagne: { gold: '#d4af37', light: '#fbf7ee', dark: '#8c6d46', bronze: '#a37c4d' }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Playfair Display', 'Georgia', 'serif']
+                    }
+                }
+            }
+        }
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,400&display=swap" rel="stylesheet">
-    <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Custom Styles -->
-    <link rel="stylesheet" href="css/styles.css">
+
+    <style>
+        body {
+            background: linear-gradient(135deg, #fbf8f3 0%, #f4eee0 50%, #eaddcb 100%);
+            background-size: 200% 200%;
+            animation: bgShift 18s ease-in-out infinite;
+            color: #2c221e;
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .serif-title { font-family: 'Playfair Display', serif; }
+
+        .glass-card {
+            background: rgba(255, 253, 249, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(212, 184, 134, 0.35);
+            box-shadow: 0 10px 30px -5px rgba(82, 55, 32, 0.06), 0 4px 12px -2px rgba(82, 55, 32, 0.03);
+        }
+
+        /* ---------- ambient floating orbs ---------- */
+        .orb { position: fixed; border-radius: 9999px; filter: blur(70px); pointer-events: none; z-index: 0; opacity: .55; }
+        .orb-1 { width: 340px; height: 340px; background: rgba(212,175,55,.28); top: -80px; right: -60px; animation: floatA 14s ease-in-out infinite; }
+        .orb-2 { width: 300px; height: 300px; background: rgba(184,137,88,.25); bottom: -90px; left: -70px; animation: floatB 17s ease-in-out infinite; }
+        .orb-3 { width: 220px; height: 220px; background: rgba(239,229,213,.9); top: 40%; left: 55%; animation: floatA 21s ease-in-out infinite reverse; }
+        #page { position: relative; z-index: 1; }
+
+        /* ---------- keyframes ---------- */
+        @keyframes bgShift { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        @keyframes floatA { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-40px, 50px) scale(1.12); } }
+        @keyframes floatB { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(60px, -40px) scale(1.1); } }
+        @keyframes riseIn { from { opacity: 0; transform: translateY(26px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideRow { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulseRing { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,.55); } 70% { box-shadow: 0 0 0 9px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }
+        @keyframes shake { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-8px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(5px); } }
+        @keyframes sheen { 0% { transform: translateX(-120%) skewX(-20deg); } 100% { transform: translateX(260%) skewX(-20deg); } }
+        @keyframes crownGlow { 0%,100% { text-shadow: 0 0 0 rgba(212,175,55,0); } 50% { text-shadow: 0 0 14px rgba(212,175,55,.75); } }
+
+        .rise { opacity: 0; animation: riseIn .7s cubic-bezier(.22,.9,.3,1) forwards; }
+        .d1 { animation-delay: .05s; } .d2 { animation-delay: .15s; } .d3 { animation-delay: .25s; }
+        .d4 { animation-delay: .35s; } .d5 { animation-delay: .45s; }
+
+        /* ---------- stat cards ---------- */
+        .stat-card { position: relative; overflow: hidden; transition: transform .35s cubic-bezier(.22,.9,.3,1), box-shadow .35s; }
+        .stat-card:hover { transform: translateY(-6px); box-shadow: 0 22px 40px -12px rgba(82,55,32,.22); }
+        .stat-card::after {
+            content: ''; position: absolute; top: 0; left: 0; width: 40%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+            transform: translateX(-120%) skewX(-20deg);
+        }
+        .stat-card:hover::after { animation: sheen .9s ease; }
+        .stat-icon { transition: transform .4s cubic-bezier(.3,1.6,.5,1); }
+        .stat-card:hover .stat-icon { transform: rotate(-12deg) scale(1.2); }
+
+        /* ---------- skeleton loader ---------- */
+        .skeleton {
+            background: linear-gradient(90deg, #efe5d5 25%, #f9f3e8 50%, #efe5d5 75%);
+            background-size: 800px 100%; animation: shimmer 1.4s linear infinite; border-radius: 8px; height: 14px;
+        }
+
+        /* ---------- table ---------- */
+        .row-anim { opacity: 0; animation: slideRow .5s cubic-bezier(.22,.9,.3,1) forwards; }
+        .client-row { transition: background .25s, transform .25s; cursor: pointer; }
+        .client-row:hover { background: rgba(212,175,55,.10); transform: translateX(4px); }
+        .chev { transition: transform .35s cubic-bezier(.3,1.4,.5,1); }
+        .client-row.open .chev { transform: rotate(90deg); }
+        .detail-wrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .45s cubic-bezier(.22,.9,.3,1); }
+        .detail-wrap.open { grid-template-rows: 1fr; }
+        .detail-inner { overflow: hidden; }
+        .guest-chip { opacity: 0; animation: riseIn .4s ease forwards; }
+
+        /* ---------- buttons / inputs ---------- */
+        .btn-lux { position: relative; overflow: hidden; transition: transform .2s, box-shadow .25s; }
+        .btn-lux:hover { transform: translateY(-2px); box-shadow: 0 10px 20px -6px rgba(82,55,32,.4); }
+        .btn-lux:active { transform: translateY(0) scale(.97); }
+        .btn-lux::after {
+            content: ''; position: absolute; top: 0; left: 0; width: 40%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+            transform: translateX(-120%) skewX(-20deg);
+        }
+        .btn-lux:hover::after { animation: sheen .8s ease; }
+        .spinning i { animation: spin .8s linear infinite; }
+        .live-dot { animation: pulseRing 1.8s infinite; }
+        .crown { animation: crownGlow 3s ease-in-out infinite; }
+        .shake { animation: shake .45s ease; }
+        .search-input { transition: box-shadow .25s, border-color .25s, width .35s; }
+        .search-input:focus { width: 18rem; }
+
+        .toast { transform: translateY(30px); opacity: 0; transition: all .4s cubic-bezier(.22,.9,.3,1); }
+        .toast.show { transform: translateY(0); opacity: 1; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f7f2ea; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cca378; border-radius: 10px; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+        }
+    </style>
 </head>
-<body class="p-6 text-stone-800">
-    <div class="max-w-7xl mx-auto space-y-6">
-        <!-- Header -->
-        <header class="glass-card rounded-2xl p-6 flex justify-between items-center shadow-lg">
-            <div>
-                <h1 class="text-3xl font-serif font-bold tracking-wide">Admin Portal</h1>
-                <p class="text-xs text-stone-500 mt-1"><i class="fa-solid fa-database text-amber-600 mr-1"></i> Managed via C Backend & SQLite Engine</p>
+<body class="p-3 md:p-6 text-beige-900 custom-scrollbar">
+
+    <div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div>
+
+    <!-- ================= LOGIN GATE ================= -->
+    <div id="login-gate" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-beige-900/50 backdrop-blur-md" style="animation: fadeIn .5s ease">
+        <div id="login-card" class="glass-card bg-white/95 max-w-md w-full p-8 rounded-2xl shadow-2xl space-y-5 rise">
+            <div class="text-center space-y-2">
+                <div class="w-14 h-14 mx-auto rounded-full bg-champagne-gold/20 flex items-center justify-center">
+                    <i class="fa-solid fa-crown crown text-champagne-dark text-xl"></i>
+                </div>
+                <h2 class="serif-title text-2xl font-bold">Admin Sign In</h2>
+                <p class="text-xs text-beige-600">Restricted area. Administrator credentials required.</p>
             </div>
-            <a href="index.html" class="px-4 py-2 bg-stone-800 text-stone-100 hover:bg-stone-700 transition rounded-xl text-xs font-semibold shadow">
-                <i class="fa-solid fa-arrow-left mr-1"></i> Back to Visualizer
-            </a>
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-beige-700 uppercase mb-1">Username</label>
+                    <input id="login-user" type="text" autocomplete="username" class="w-full bg-beige-50 border border-beige-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-champagne-dark transition">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-beige-700 uppercase mb-1">Password</label>
+                    <input id="login-pass" type="password" autocomplete="current-password" class="w-full bg-beige-50 border border-beige-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-champagne-dark transition">
+                </div>
+                <button id="login-btn" type="submit" class="btn-lux w-full py-2.5 bg-gradient-to-r from-beige-700 via-beige-800 to-beige-900 text-white rounded-lg text-sm font-semibold shadow">Sign In</button>
+                <div id="login-msg" class="text-center text-xs min-h-[1rem] text-red-600"></div>
+            </form>
+            <a href="index.html" class="block text-center text-xs text-beige-600 hover:text-beige-900 transition"><i class="fa-solid fa-arrow-left mr-1"></i>Back to Visualizer</a>
+        </div>
+    </div>
+
+    <!-- ================= DASHBOARD ================= -->
+    <div id="page" class="max-w-7xl mx-auto space-y-6 hidden">
+
+        <header class="glass-card rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-4 rise d1">
+            <div class="text-center md:text-left">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-champagne-gold/15 text-beige-800 text-xs font-semibold uppercase tracking-wider mb-2 border border-champagne-gold/30">
+                    <i class="fa-solid fa-crown crown text-champagne-dark text-xs"></i> Administrator
+                </div>
+                <h1 class="serif-title text-3xl md:text-4xl font-bold tracking-tight">Admin Portal</h1>
+                <p class="text-xs text-beige-600 mt-1 flex items-center justify-center md:justify-start gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 live-dot inline-block"></span>
+                    <i class="fa-solid fa-database text-champagne-dark"></i> Live from C Backend &amp; NeonDB (PostgreSQL)
+                </p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap justify-center">
+                <a href="index.html" class="btn-lux px-4 py-2 bg-white border border-beige-300 text-beige-800 rounded-xl text-xs font-semibold shadow-sm">
+                    <i class="fa-solid fa-arrow-left mr-1"></i> Back to Visualizer
+                </a>
+                <button onclick="logout()" class="btn-lux px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-xl text-xs font-semibold shadow">
+                    <i class="fa-solid fa-right-from-bracket mr-1"></i> Sign Out
+                </button>
+            </div>
         </header>
 
-        <!-- Admin Overview Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div class="glass-card rounded-2xl p-5 shadow-lg border-l-4 border-amber-700">
-                <p class="text-xs uppercase tracking-wider text-stone-500 font-semibold">Total Registered Users</p>
-                <h3 id="stat-users-count" class="text-3xl font-serif font-bold text-stone-800 mt-2">1</h3>
+        <!-- Stats -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <div class="glass-card stat-card rounded-2xl p-5 border-l-4 border-champagne-gold rise d2">
+                <div class="flex items-center justify-between">
+                    <p class="text-[11px] uppercase tracking-wider text-beige-600 font-semibold">Total Users</p>
+                    <i class="stat-icon fa-solid fa-users text-champagne-dark"></i>
+                </div>
+                <h3 id="stat-users" data-count class="serif-title text-3xl font-bold mt-2">0</h3>
             </div>
-            <div class="glass-card rounded-2xl p-5 shadow-lg border-l-4 border-stone-800">
-                <p class="text-xs uppercase tracking-wider text-stone-500 font-semibold">Active Saved Events</p>
-                <h3 id="stat-events-count" class="text-3xl font-serif font-bold text-stone-800 mt-2">1</h3>
+            <div class="glass-card stat-card rounded-2xl p-5 border-l-4 border-beige-800 rise d3">
+                <div class="flex items-center justify-between">
+                    <p class="text-[11px] uppercase tracking-wider text-beige-600 font-semibold">Client Accounts</p>
+                    <i class="stat-icon fa-solid fa-user-tie text-beige-700"></i>
+                </div>
+                <h3 id="stat-clients" data-count class="serif-title text-3xl font-bold mt-2">0</h3>
             </div>
-            <div class="glass-card rounded-2xl p-5 shadow-lg border-l-4 border-emerald-700">
-                <p class="text-xs uppercase tracking-wider text-stone-500 font-semibold">Database Engine</p>
-                <h3 class="text-2xl font-serif font-bold text-stone-800 mt-2">SQLite 3 (Embedded)</h3>
+            <div class="glass-card stat-card rounded-2xl p-5 border-l-4 border-emerald-700 rise d4">
+                <div class="flex items-center justify-between">
+                    <p class="text-[11px] uppercase tracking-wider text-beige-600 font-semibold">Saved Events</p>
+                    <i class="stat-icon fa-solid fa-calendar-check text-emerald-700"></i>
+                </div>
+                <h3 id="stat-events" data-count class="serif-title text-3xl font-bold mt-2">0</h3>
+            </div>
+            <div class="glass-card stat-card rounded-2xl p-5 border-l-4 border-amber-700 rise d5">
+                <div class="flex items-center justify-between">
+                    <p class="text-[11px] uppercase tracking-wider text-beige-600 font-semibold">Guests Seated</p>
+                    <i class="stat-icon fa-solid fa-chair text-amber-700"></i>
+                </div>
+                <h3 id="stat-guests" data-count class="serif-title text-3xl font-bold mt-2">0</h3>
             </div>
         </div>
 
-        <!-- Registered Clients Directory Table -->
-        <main class="glass-card rounded-2xl p-6 shadow-lg space-y-4">
-            <div class="flex justify-between items-center border-b pb-4">
-                <h2 class="text-xl font-serif font-bold text-stone-800">Client Directory</h2>
-                <button id="refresh-clients-btn" class="px-3 py-1.5 bg-stone-200 text-stone-800 rounded-lg text-xs font-medium hover:bg-stone-300 transition">
-                    <i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh Data
-                </button>
+        <!-- Directory -->
+        <main class="glass-card rounded-2xl p-6 space-y-4 rise d5">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-beige-200/80 pb-4">
+                <div>
+                    <h2 class="serif-title text-xl font-bold">Client Directory</h2>
+                    <p class="text-xs text-beige-600">Click a row to view that client's table assignments.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="relative">
+                        <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-beige-400 text-xs"></i>
+                        <input id="search" type="text" placeholder="Search users..." class="search-input w-44 bg-white/90 border border-beige-300 rounded-lg pl-8 pr-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-champagne-dark">
+                    </div>
+                    <button id="refresh-btn" class="btn-lux px-3 py-2 bg-beige-800 text-amber-50 rounded-lg text-xs font-semibold shadow">
+                        <i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh
+                    </button>
+                </div>
             </div>
 
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto custom-scrollbar">
                 <table class="w-full text-left border-collapse">
                     <thead>
-                        <tr class="border-b border-stone-200 text-xs font-semibold text-stone-500 uppercase tracking-wider">
-                            <th class="py-3 px-4">User ID</th>
+                        <tr class="border-b border-beige-200 text-[11px] font-semibold text-beige-600 uppercase tracking-wider">
+                            <th class="py-3 px-4 w-8"></th>
+                            <th class="py-3 px-4">ID</th>
                             <th class="py-3 px-4">Username</th>
                             <th class="py-3 px-4">Email</th>
                             <th class="py-3 px-4">Role</th>
                             <th class="py-3 px-4">Saved Events</th>
+                            <th class="py-3 px-4">Guests</th>
                         </tr>
                     </thead>
-                    <tbody id="client-table-body" class="divide-y divide-stone-200 text-sm text-stone-700">
-                        <tr>
-                            <td class="py-3 px-4 font-mono text-xs">#1</td>
-                            <td class="py-3 px-4 font-semibold">Admin</td>
-                            <td class="py-3 px-4">admin@gala.com</td>
-                            <td class="py-3 px-4"><span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-xs font-semibold">Administrator</span></td>
-                            <td class="py-3 px-4">1</td>
-                        </tr>
-                    </tbody>
+                    <tbody id="client-body" class="text-sm text-beige-800"></tbody>
                 </table>
             </div>
         </main>
     </div>
 
+    <!-- Toast -->
+    <div id="toast" class="toast fixed bottom-5 right-5 z-[60] px-4 py-3 rounded-xl shadow-xl border bg-white text-xs font-medium flex items-center gap-2 pointer-events-none">
+        <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-600"></i><span id="toast-text"></span>
+    </div>
+
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            fetch('/api/admin/users')
-                .then(res => res.json())
-                .then(data => {
-                    const tbody = document.getElementById('client-table-body');
-                    if (Array.isArray(data) && data.length > 0) {
-                        tbody.innerHTML = data.map(user => `
-                            <tr>
-                                <td class="py-3 px-4 font-mono text-xs">#${user.id}</td>
-                                <td class="py-3 px-4 font-semibold">${user.username}</td>
-                                <td class="py-3 px-4">${user.email}</td>
-                                <td class="py-3 px-4">
-                                    <span class="px-2 py-0.5 ${user.is_admin ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'} rounded-full text-xs font-semibold">
-                                        ${user.is_admin ? 'Administrator' : 'Client'}
-                                    </span>
-                                </td>
-                                <td class="py-3 px-4">${user.total_events || 0}</td>
-                            </tr>
-                        `).join('');
-                        document.getElementById('stat-users-count').textContent = data.length;
-                    }
-                })
-                .catch(err => console.error('Error fetching admin data:', err));
+    /* ====================== helpers ====================== */
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    const getToken = () => localStorage.getItem('gala_token');
+    let allUsers = [];
+
+    function toast(msg, err = false) {
+        const t = $('toast');
+        $('toast-text').textContent = msg;
+        $('toast-icon').className = err ? 'fa-solid fa-circle-exclamation text-red-600' : 'fa-solid fa-circle-check text-emerald-600';
+        t.classList.add('show');
+        clearTimeout(toast._t);
+        toast._t = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    /* animated count-up */
+    function countUp(el, to, dur = 1100) {
+        const from = parseInt(el.textContent, 10) || 0;
+        if (from === to) { el.textContent = to; return; }
+        const start = performance.now();
+        const ease = (x) => 1 - Math.pow(1 - x, 4);
+        (function tick(now) {
+            const p = Math.min(1, (now - start) / dur);
+            el.textContent = Math.round(from + (to - from) * ease(p));
+            if (p < 1) requestAnimationFrame(tick);
+        })(start);
+    }
+
+    function guestCount(u) {
+        const tables = (u.eventData && u.eventData.tables) || [];
+        return tables.reduce((n, t) => n + (t.guests ? t.guests.length : 0), 0);
+    }
+
+    /* ====================== auth ====================== */
+    function showLogin() {
+        $('page').classList.add('hidden');
+        $('login-gate').classList.remove('hidden');
+    }
+    function showDashboard() {
+        $('login-gate').classList.add('hidden');
+        $('page').classList.remove('hidden');
+        loadUsers();
+    }
+    function logout() {
+        localStorage.removeItem('gala_token');
+        localStorage.removeItem('gala_current_user');
+        showLogin();
+    }
+
+    $('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = $('login-btn'), msg = $('login-msg');
+        msg.textContent = '';
+        btn.disabled = true; btn.textContent = 'Authenticating...';
+        try {
+            const res = await fetch('/api/auth/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: $('login-user').value.trim(), password: $('login-pass').value })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Invalid username or password');
+            if (!data.isAdmin) throw new Error('This account does not have administrator access');
+            localStorage.setItem('gala_token', data.token);
+            $('login-pass').value = '';
+            showDashboard();
+        } catch (err) {
+            msg.textContent = err.message;
+            const card = $('login-card');
+            card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+        } finally {
+            btn.disabled = false; btn.textContent = 'Sign In';
+        }
+    });
+
+    /* ====================== data ====================== */
+    function renderSkeleton() {
+        $('client-body').innerHTML = Array.from({ length: 4 }, () => `
+            <tr><td colspan="7" class="py-3 px-4"><div class="skeleton w-full"></div></td></tr>`).join('');
+    }
+
+    async function loadUsers() {
+        const btn = $('refresh-btn');
+        btn.classList.add('spinning');
+        renderSkeleton();
+        try {
+            const res = await fetch('/api/admin/users', { headers: { 'Authorization': 'Bearer ' + getToken() } });
+            if (res.status === 401 || res.status === 403) { toast('Session expired. Please sign in again.', true); logout(); return; }
+            const data = await res.json();
+            if (!Array.isArray(data)) throw new Error(data.error || 'Unexpected response');
+            allUsers = data;
+            updateStats();
+            renderTable();
+        } catch (err) {
+            $('client-body').innerHTML = `<tr><td colspan="7" class="py-8 text-center text-red-600 text-xs"><i class="fa-solid fa-circle-exclamation mr-1"></i>${esc(err.message)}</td></tr>`;
+            toast('Could not load users', true);
+        } finally {
+            setTimeout(() => btn.classList.remove('spinning'), 400);
+        }
+    }
+
+    function updateStats() {
+        countUp($('stat-users'), allUsers.length);
+        countUp($('stat-clients'), allUsers.filter(u => !u.is_admin).length);
+        countUp($('stat-events'), allUsers.reduce((n, u) => n + (parseInt(u.total_events, 10) || 0), 0));
+        countUp($('stat-guests'), allUsers.reduce((n, u) => n + guestCount(u), 0));
+    }
+
+    function renderTable() {
+        const q = $('search').value.trim().toLowerCase();
+        const list = allUsers.filter(u => !q || (u.username || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
+        const body = $('client-body');
+
+        if (!list.length) {
+            body.innerHTML = `<tr><td colspan="7" class="py-10 text-center text-beige-500 text-xs italic">No users match your search.</td></tr>`;
+            return;
+        }
+
+        body.innerHTML = list.map((u, i) => {
+            const tables = (u.eventData && u.eventData.tables) || [];
+            const guests = guestCount(u);
+            const chips = tables.flatMap(t => (t.guests || []).map((g, gi) => `
+                <div class="guest-chip flex items-center justify-between gap-3 bg-white/80 border border-beige-200 rounded-lg px-3 py-2 text-xs" style="animation-delay:${gi * 40}ms">
+                    <div class="truncate">
+                        <div class="font-semibold truncate">${esc(g.name)}</div>
+                        <div class="text-beige-600 text-[11px] truncate">${esc(g.email)}</div>
+                    </div>
+                    <span class="shrink-0 px-2 py-0.5 rounded-full bg-champagne-gold/20 text-beige-800 font-semibold text-[11px]">${esc(t.name)}</span>
+                </div>`)).join('');
+
+            return `
+            <tr class="client-row row-anim border-b border-beige-200/70" style="animation-delay:${i * 60}ms" data-id="${esc(u.id)}">
+                <td class="py-3 px-4"><i class="chev fa-solid fa-chevron-right text-beige-400 text-xs"></i></td>
+                <td class="py-3 px-4 font-mono text-xs text-beige-600">#${esc(u.id)}</td>
+                <td class="py-3 px-4 font-semibold">${esc(u.username)}</td>
+                <td class="py-3 px-4 text-beige-700">${esc(u.email)}</td>
+                <td class="py-3 px-4">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-semibold ${u.is_admin ? 'bg-champagne-gold/25 text-beige-800' : 'bg-beige-100 text-beige-700'}">
+                        ${u.is_admin ? '<i class="fa-solid fa-crown text-[10px] mr-1 text-champagne-dark"></i>Administrator' : 'Client'}
+                    </span>
+                </td>
+                <td class="py-3 px-4">${esc(u.total_events || 0)}</td>
+                <td class="py-3 px-4">${guests}</td>
+            </tr>
+            <tr class="detail-row">
+                <td colspan="7" class="p-0">
+                    <div class="detail-wrap" id="detail-${esc(u.id)}">
+                        <div class="detail-inner">
+                            <div class="px-6 py-4 bg-beige-100/60 border-b border-beige-200">
+                                ${chips
+                                    ? `<div class="text-[11px] font-semibold uppercase tracking-wider text-beige-600 mb-2">Seating assignments (to_name / to_email / table_number)</div>
+                                       <div class="grid grid-cols-1 md:grid-cols-2 gap-2">${chips}</div>`
+                                    : `<p class="text-xs text-beige-500 italic">No seating plan saved yet.</p>`}
+                            </div>
+                        </div>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+        body.querySelectorAll('.client-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const wrap = $('detail-' + row.dataset.id);
+                const open = wrap.classList.toggle('open');
+                row.classList.toggle('open', open);
+            });
         });
+    }
+
+    $('search').addEventListener('input', renderTable);
+    $('refresh-btn').addEventListener('click', () => { loadUsers(); toast('Refreshing data...'); });
+
+    /* ====================== boot ====================== */
+    window.addEventListener('DOMContentLoaded', () => {
+        if (getToken()) showDashboard(); else showLogin();
+    });
     </script>
 </body>
 </html>
